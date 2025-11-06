@@ -110,6 +110,20 @@ exports.validate = async (req) => {
     if (!req?.autoDetectNetworkInterfaceId && isEmpty(req?.networkInterfaceId)) {
         return { status: 'error', error: 'networkInterfaceId cannot be empty' };
     }
+
+    const types = Array.isArray(req?.injectionTypes)
+        ? req.injectionTypes
+        : (req?.injectionType ? [req.injectionType] : []);
+
+    if (types.includes('SO')) {
+        const mode = req?.osRepair?.mode || 'hostStart';
+        if (mode === 'hostStart') {
+            if (!req?.osRepair?.host?.ip || !req?.osRepair?.host?.sshUsername || !req?.osRepair?.host?.sshPassword || !req?.osRepair?.vmName) {
+                return { status: 'error', error: 'Para SO com hostStart: host.ip, host.sshUsername, host.sshPassword e vmName são obrigatórios' };
+            }
+        }
+    }
+
     return { status: true, error: null };
 };
 
@@ -171,7 +185,7 @@ exports.scheduleAtOnVm = ({ ip, sshUsername, sshPassword, secondsAhead, iface, a
 
     const innerQuoted = quoteForRemoteSingle(innerScript);
 
-    // executa via sshpass/ssh com vetor de args (sem shell local bagunçando aspas)
+    // executa via sshpass/ssh com vetor de args
     const args = [
         '-p', sshPassword,
         'ssh',
@@ -300,4 +314,125 @@ exports.detectHardwareInterfaceId = async (req) => {
     const resp = await this.autoDetectNetworkInterfaceNames(req?.sshUsername, req?.sshPassword, req?.ip);
     return (resp.status === 'success') ? resp.data : [];
 };
+
+exports.scheduleAtOnVmCmd = ({ ip, sshUsername, sshPassword, secondsAhead, cmdLine }) => {
+    const secs = Math.max(1, Number(secondsAhead) | 0);
+    const passQ = singleQuote(sshPassword);
+
+    const quoteForRemoteSingle = (s) => `'${String(s).replace(/'/g, `'"'"'`)}'`;
+    const cmdQ = quoteForRemoteSingle(cmdLine);
+
+    const innerScript = [
+        'set -euo pipefail;',
+        'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin;',
+        'AT=$(command -v at || echo /usr/bin/at);',
+        'DATE=$(command -v date || echo /bin/date);',
+        'SED=$(command -v sed || echo /usr/bin/sed);',
+        `TARGET_EPOCH=$($DATE -d "+${secs} seconds" +%s);`,
+        `MINUTE_EPOCH=$(( TARGET_EPOCH - (TARGET_EPOCH % 60) ));`,
+        `REM=$(( TARGET_EPOCH - MINUTE_EPOCH ));`,
+        `HUMAN=$($DATE -d "@$TARGET_EPOCH" +"%d/%m/%Y %H:%M:%S");`,
+        `TS_MIN=$($DATE -d "@$MINUTE_EPOCH" +%Y%m%d%H%M);`,
+        `JOB_LINE="sleep $REM; echo ${passQ} | sudo -S bash -lc ${cmdQ}";`,
+        `RES=$(printf '%s\n' "$JOB_LINE" | $AT -t "$TS_MIN" 2>&1);`,
+        'echo "$RES";',
+        `echo "$RES" | $SED -n 's/^.*job \\([0-9]\\+\\) at \\(.*\\)$/JOB:\\1;WHEN:\\2/p';`,
+        'echo "HUMAN:$HUMAN";',
+        'echo "REM:$REM";',
+        'echo "TS_MIN:$TS_MIN";'
+    ].join(' ');
+
+    const innerQuoted = quoteForRemoteSingle(innerScript);
+
+    const args = [
+        '-p', sshPassword,
+        'ssh', '-tt',
+        '-o', 'StrictHostKeyChecking=no',
+        '-o', 'PasswordAuthentication=yes',
+        `${sshUsername}@${ip}`,
+        'bash', '-lc', innerQuoted
+    ];
+
+    const { ok, out, err } = exports.runFileWithOutput('sshpass', args);
+    if (!ok) return { ok: false, error: err };
+
+    const jobMatch   = out.match(/JOB:(\d+);WHEN:(.*)/);
+    const humanMatch = out.match(/HUMAN:(.*)/);
+    const remMatch   = out.match(/REM:(\d+)/);
+    const tsminMatch = out.match(/TS_MIN:(\d+)/);
+    if (!jobMatch) return { ok: false, error: out || 'no at job created (empty output)' };
+
+    return {
+        ok: true,
+        jobId: jobMatch[1],
+        whenStr: jobMatch[2].trim(),
+        human: humanMatch ? humanMatch[1].trim() : null,
+        rem: remMatch ? Number(remMatch[1]) : null,
+        tsMin: tsminMatch ? tsminMatch[1] : null,
+        raw: out
+    };
+};
+
+exports.scheduleAtOnHostVBox = ({ hostIp, hostUsername, hostPassword, secondsAhead, vmName, action }) => {
+    // action: 'start' | 'poweroff' | 'acpipowerbutton'
+    const secs = Math.max(1, Number(secondsAhead) | 0);
+    const vmQ = `'${String(vmName).replace(/'/g, `'"'"'`)}'`;
+
+    let vboxCmd;
+    if (action === 'start') vboxCmd = `VBoxManage startvm ${vmQ} --type headless`;
+    else if (action === 'poweroff') vboxCmd = `VBoxManage controlvm ${vmQ} poweroff`;
+    else vboxCmd = `VBoxManage controlvm ${vmQ} acpipowerbutton`;
+
+    const innerScript = [
+        'set -euo pipefail;',
+        'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin;',
+        'AT=$(command -v at || echo /usr/bin/at);',
+        'DATE=$(command -v date || echo /bin/date);',
+        'SED=$(command -v sed || echo /usr/bin/sed);',
+        `TARGET_EPOCH=$($DATE -d "+${secs} seconds" +%s);`,
+        `MINUTE_EPOCH=$(( TARGET_EPOCH - (TARGET_EPOCH % 60) ));`,
+        `REM=$(( TARGET_EPOCH - MINUTE_EPOCH ));`,
+        `HUMAN=$($DATE -d "@$TARGET_EPOCH" +"%d/%m/%Y %H:%M:%S");`,
+        `TS_MIN=$($DATE -d "@$MINUTE_EPOCH" +%Y%m%d%H%M);`,
+        `JOB_LINE="sleep $REM; ${vboxCmd}";`,
+        `RES=$(printf '%s\n' "$JOB_LINE" | $AT -t "$TS_MIN" 2>&1);`,
+        'echo "$RES";',
+        `echo "$RES" | $SED -n 's/^.*job \\([0-9]\\+\\) at \\(.*\\)$/JOB:\\1;WHEN:\\2/p';`,
+        'echo "HUMAN:$HUMAN";',
+        'echo "REM:$REM";',
+        'echo "TS_MIN:$TS_MIN";'
+    ].join(' ');
+
+    const quoteForRemoteSingle = (s) => `'${String(s).replace(/'/g, `'"'"'`)}'`;
+    const innerQuoted = quoteForRemoteSingle(innerScript);
+
+    const args = [
+        '-p', hostPassword,
+        'ssh',
+        '-o', 'StrictHostKeyChecking=no',
+        '-o', 'PasswordAuthentication=yes',
+        `${hostUsername}@${hostIp}`,
+        'bash', '-lc', innerQuoted
+    ];
+
+    const { ok, out, err } = exports.runFileWithOutput('sshpass', args);
+    if (!ok) return { ok: false, error: err };
+
+    const jobMatch   = out.match(/JOB:(\d+);WHEN:(.*)/);
+    const humanMatch = out.match(/HUMAN:(.*)/);
+    const remMatch   = out.match(/REM:(\d+)/);
+    const tsminMatch = out.match(/TS_MIN:(\d+)/);
+    if (!jobMatch) return { ok: false, error: out || 'no at job created (empty output)' };
+
+    return {
+        ok: true,
+        jobId: jobMatch[1],
+        whenStr: jobMatch[2].trim(),
+        human: humanMatch ? humanMatch[1].trim() : null,
+        rem: remMatch ? Number(remMatch[1]) : null,
+        tsMin: tsminMatch ? tsminMatch[1] : null,
+        raw: out
+    };
+};
+
 
