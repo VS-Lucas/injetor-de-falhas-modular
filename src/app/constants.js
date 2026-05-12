@@ -22,8 +22,8 @@ const LABELS_EN = {
     form_yes: 'Yes',
     form_no: 'No',
     form_error_select_fault: 'Select at least one fault type.',
-    status_up: 'Active',
-    status_down: 'Inactive',
+    status_up: 'up',
+    status_down: 'down',
 }
 
 const LABELS_PT_BR = {
@@ -50,8 +50,8 @@ const LABELS_PT_BR = {
     form_yes: 'Sim',
     form_no: 'Não',
     form_error_select_fault: 'Selecione pelo menos um tipo de falha.',
-    status_up: 'Ativo',
-    status_down: 'Inativo',
+    status_up: 'up',
+    status_down: 'down',
 }
 
 export const LABELS = process.env.NEXT_PUBLIC_APP_LANGUAGE == 'pt-br' ? LABELS_PT_BR : LABELS_EN

@@ -3,7 +3,6 @@ import React, { useState, useRef, useEffect } from 'react';
 import Image from 'next/image';
 import injectorLogo from '../../../../public/fault_injector_logo.png';
 import Loading from '../loading';
-import CsvDownloadButton from 'react-json-to-csv';
 import { LABELS } from '@/app/constants';
 
 const Form = () => {
@@ -26,9 +25,6 @@ const Form = () => {
     const [vmName, setVmName] = useState('');
     const [ttfOs, setTtfOs] = useState('');
     const [ttrOs, setTtrOs] = useState('');
-
-    // ── Experimento ──────────────────────────────────────────────────────────
-    const [experimentAttempts, setExperimentAttempts] = useState('');
 
     // ── UI ───────────────────────────────────────────────────────────────────
     const [logMsg, setLogMsg] = useState([]);
@@ -102,15 +98,12 @@ const Form = () => {
         vmName,
         ttfOs,
         ttrOs,
-        experimentAttempts,
     });
 
     const validate = () => {
         if (!hwSelected && !osSelected) return LABELS.form_error_select_fault;
         if (isEmpty(ip) || isEmpty(sshUsername) || isEmpty(sshPassword))
             return 'IP, usuário SSH e senha SSH são obrigatórios.';
-        if (isEmpty(experimentAttempts) || parseInt(experimentAttempts) <= 0)
-            return 'Número de tentativas deve ser maior que zero.';
         if (hwSelected) {
             if (isEmpty(ttfHw) || parseFloat(ttfHw) <= 0) return `${LABELS.form_ttf_hw} inválido.`;
             if (isEmpty(ttrHw) || parseFloat(ttrHw) <= 0) return `${LABELS.form_ttr_hw} inválido.`;
@@ -143,8 +136,6 @@ const Form = () => {
                 if (data?.status === 'error') {
                     setLoading(false);
                     showError(data.message);
-                } else if (data?.status === 'ok') {
-                    setLogMsg((prev) => [...prev, data.message]);
                 }
             };
         } catch (error) {
@@ -246,13 +237,21 @@ const Form = () => {
                         </div>
 
                         {logMsg.length > 0 && (
-                            <CsvDownloadButton
-                                data={[logMsg]}
-                                filename="ttr_log.csv"
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    const blob = new Blob([logMsg.join('\n')], { type: 'text/plain' });
+                                    const url = URL.createObjectURL(blob);
+                                    const a = document.createElement('a');
+                                    a.href = url;
+                                    a.download = 'ttr_log.txt';
+                                    a.click();
+                                    URL.revokeObjectURL(url);
+                                }}
                                 className="w-full px-6 py-3 mt-3 text-lg text-white transition-all duration-150 ease-linear rounded-lg shadow outline-none bg-neutral-400 hover:bg-neutral-600 hover:shadow-lg focus:outline-none"
                             >
                                 {LABELS.form_download_log}
-                            </CsvDownloadButton>
+                            </button>
                         )}
                     </div>
                 )}
@@ -381,21 +380,6 @@ const Form = () => {
                             </div>
                         </div>
                     )}
-
-                    {/* Tentativas */}
-                    <div className="relative z-0 w-full mb-5">
-                        <input type="number" id="experimentAttempts" placeholder=" "
-                            value={experimentAttempts}
-                            onChange={e => setExperimentAttempts(e.target.value)}
-                            className={`${inputClass} pl-5`} />
-                        <div className="absolute top-0 right-0 mt-3 mr-4 text-gray-600">
-                            {LABELS.form_attempts}
-                        </div>
-                        <label htmlFor="experimentAttempts"
-                            className="absolute duration-300 top-3 left-5 -z-1 origin-0 text-gray-600">
-                            {LABELS.form_experiment_attempts}
-                        </label>
-                    </div>
 
                     {/* Botão */}
                     <button

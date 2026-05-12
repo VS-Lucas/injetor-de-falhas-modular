@@ -113,10 +113,6 @@ exports.validate = async (req) => {
         return { status: 'error', error: 'IP, usuário SSH e senha SSH são obrigatórios.' };
     }
 
-    if (isEmpty(req.experimentAttempts) || parseInt(req.experimentAttempts) <= 0) {
-        return { status: 'error', error: 'Número de tentativas deve ser maior que zero.' };
-    }
-
     const hasHw = req.faultTypes.includes('hardware');
     const hasOs = req.faultTypes.includes('os');
 
