@@ -36,7 +36,7 @@ const Form = () => {
     const [loading, setLoading] = useState(false);
     const [autoScroll, setAutoScroll] = useState(true);
     const [toast, setToast] = useState(null);
-    const pingRunningRef = useRef(false);
+    const pingGenRef = useRef(0);
     const logContainerRef = useRef(null);
 
     const showToast = (msg, success = true) => {
@@ -58,26 +58,29 @@ const Form = () => {
 
     useEffect(() => {
         if (loading && ip) {
-            pingRunningRef.current = true;
+            const gen = ++pingGenRef.current;
+            let nextTick = Date.now() + 1000;
+
             const loop = async () => {
-                if (!pingRunningRef.current) return;
-                const start = Date.now();
+                if (pingGenRef.current !== gen) return;
+                const controller = new AbortController();
+                const abort = setTimeout(() => controller.abort(), 900);
                 try {
-                    const res = await fetch(`${process.env.NEXT_PUBLIC_PING_API_ROUTE}${ip}`);
+                    const res = await fetch(`${process.env.NEXT_PUBLIC_PING_API_ROUTE}${ip}`, { signal: controller.signal });
+                    clearTimeout(abort);
                     const data = await res.json();
                     setLogMsg(prev => [...prev, `${timestamp()} ${data.server_status ? LABELS.status_up : LABELS.status_down}`]);
                 } catch {
+                    clearTimeout(abort);
                     setLogMsg(prev => [...prev, `${timestamp()} ${LABELS.status_down}`]);
                 }
-                const elapsed = Date.now() - start;
-                const delay = Math.max(0, 1000 - elapsed);
-                if (pingRunningRef.current) setTimeout(loop, delay);
+                const delay = Math.max(50, nextTick - Date.now());
+                nextTick += 1000;
+                if (pingGenRef.current === gen) setTimeout(loop, delay);
             };
             loop();
-        } else {
-            pingRunningRef.current = false;
         }
-        return () => { pingRunningRef.current = false; };
+        return () => { pingGenRef.current++; };
     }, [loading, ip]);
 
     const isEmpty = (val) => val === '' || val == null || val == undefined;
