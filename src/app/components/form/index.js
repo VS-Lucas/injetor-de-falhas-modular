@@ -1,5 +1,5 @@
 "use client";
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import Image from 'next/image';
 import injectorLogo from '../../../../public/fault_injector_logo.png';
 import Loading from '../loading';
@@ -34,6 +34,51 @@ const Form = () => {
     const [logMsg, setLogMsg] = useState([]);
     const [errorText, setErrorText] = useState('');
     const [loading, setLoading] = useState(false);
+    const [autoScroll, setAutoScroll] = useState(true);
+    const [toast, setToast] = useState(null);
+    const pingRunningRef = useRef(false);
+    const logContainerRef = useRef(null);
+
+    const showToast = (msg, success = true) => {
+        setToast({ msg, success });
+        setTimeout(() => setToast(null), 2500);
+    };
+
+    useEffect(() => {
+        if (autoScroll && logContainerRef.current) {
+            logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+        }
+    }, [logMsg, autoScroll]);
+
+    const timestamp = () => {
+        const now = new Date();
+        const p = n => String(n).padStart(2, '0');
+        return `${p(now.getHours())}:${p(now.getMinutes())}:${p(now.getSeconds())}`;
+    };
+
+    useEffect(() => {
+        if (loading && ip) {
+            pingRunningRef.current = true;
+            const loop = async () => {
+                if (!pingRunningRef.current) return;
+                const start = Date.now();
+                try {
+                    const res = await fetch(`${process.env.NEXT_PUBLIC_PING_API_ROUTE}${ip}`);
+                    const data = await res.json();
+                    setLogMsg(prev => [...prev, `${timestamp()} ${data.server_status ? LABELS.status_up : LABELS.status_down}`]);
+                } catch {
+                    setLogMsg(prev => [...prev, `${timestamp()} ${LABELS.status_down}`]);
+                }
+                const elapsed = Date.now() - start;
+                const delay = Math.max(0, 1000 - elapsed);
+                if (pingRunningRef.current) setTimeout(loop, delay);
+            };
+            loop();
+        } else {
+            pingRunningRef.current = false;
+        }
+        return () => { pingRunningRef.current = false; };
+    }, [loading, ip]);
 
     const isEmpty = (val) => val === '' || val == null || val == undefined;
 
@@ -108,10 +153,15 @@ const Form = () => {
 
     const inputClass =
         'pt-3 pb-2 block w-full px-0 mt-0 bg-transparent border-0 border-b-2 appearance-none focus:outline-none focus:ring-0 focus:border-black border-gray-200';
-    const labelClass = 'absolute duration-300 top-3 -z-1 origin-0 text-gray-600';
+    const labelClass = 'absolute duration-300 top-3 origin-0 text-gray-500 pointer-events-none';
 
     return (
         <div className="bg-gray-100 p-0 sm:p-12">
+            {toast && (
+                <div className={`fixed bottom-6 right-6 z-50 px-4 py-3 rounded-lg shadow-lg text-white text-sm transition-all duration-300 ${toast.success ? 'bg-green-600' : 'bg-red-500'}`}>
+                    {toast.msg}
+                </div>
+            )}
             <div className="mx-auto max-w-md px-6 py-2 bg-white border-0 shadow-lg rounded-3xl mb-2">
 
                 {/* Cabeçalho */}
@@ -129,19 +179,78 @@ const Form = () => {
                     </div>
                 )}
 
-                {/* Log de eventos */}
-                {logMsg.length > 0 && (
+                {/* Monitor de eventos */}
+                {(loading || logMsg.length > 0) && (
                     <div className="flex flex-col mx-0 mb-4">
-                        <div className="bg-black text-white min-h-2 my-4 p-4 rounded-lg flex flex-col h-full max-h-48 overflow-y-auto overflow-anchor-auto">
+
+                        {/* Linha acima do painel: label + botões */}
+                        <div className="flex items-center justify-between mt-4 mb-1 px-1">
+                            <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">Monitor</span>
+                            <div className="flex items-center gap-3">
+                                <button
+                                    type="button"
+                                    onClick={() => setAutoScroll(prev => !prev)}
+                                    className={`text-xs transition-colors ${autoScroll ? 'text-green-600 hover:text-green-800' : 'text-gray-400 hover:text-gray-700'}`}
+                                >
+                                    {autoScroll ? '↓ Auto-scroll on' : '↓ Auto-scroll off'}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        const text = logMsg.join('\n');
+                                        try {
+                                            if (navigator.clipboard) {
+                                                navigator.clipboard.writeText(text).then(
+                                                    () => showToast('Copiado com sucesso!'),
+                                                    () => showToast('Erro ao copiar.', false)
+                                                );
+                                            } else {
+                                                const ta = document.createElement('textarea');
+                                                ta.value = text;
+                                                ta.style.position = 'fixed';
+                                                ta.style.opacity = '0';
+                                                document.body.appendChild(ta);
+                                                ta.focus();
+                                                ta.select();
+                                                document.execCommand('copy');
+                                                document.body.removeChild(ta);
+                                                showToast('Copiado com sucesso!');
+                                            }
+                                        } catch {
+                                            showToast('Erro ao copiar.', false);
+                                        }
+                                    }}
+                                    className="text-xs text-gray-400 hover:text-gray-700 transition-colors"
+                                >
+                                    {LABELS.form_copy_monitor}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setLogMsg([])}
+                                    className="text-xs text-gray-400 hover:text-gray-700 transition-colors"
+                                >
+                                    {LABELS.form_clear_monitor}
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Painel de log */}
+                        <div
+                            ref={logContainerRef}
+                            className="bg-black text-white rounded-lg p-4 flex flex-col max-h-48 overflow-y-auto"
+                        >
                             {logMsg.map((msg, i) => <small key={i}>{msg}</small>)}
                         </div>
-                        <CsvDownloadButton
-                            data={[logMsg]}
-                            filename="ttr_log.csv"
-                            className="w-full px-6 py-3 mt-3 text-lg text-white transition-all duration-150 ease-linear rounded-lg shadow outline-none bg-neutral-400 hover:bg-neutral-600 hover:shadow-lg focus:outline-none"
-                        >
-                            {LABELS.form_download_log}
-                        </CsvDownloadButton>
+
+                        {logMsg.length > 0 && (
+                            <CsvDownloadButton
+                                data={[logMsg]}
+                                filename="ttr_log.csv"
+                                className="w-full px-6 py-3 mt-3 text-lg text-white transition-all duration-150 ease-linear rounded-lg shadow outline-none bg-neutral-400 hover:bg-neutral-600 hover:shadow-lg focus:outline-none"
+                            >
+                                {LABELS.form_download_log}
+                            </CsvDownloadButton>
+                        )}
                     </div>
                 )}
 

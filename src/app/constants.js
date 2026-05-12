@@ -16,10 +16,14 @@ const LABELS_EN = {
     form_experiment_attempts: 'Experiment Attempts',
     form_attempts: 'attempts',
     form_download_log: 'Download Log',
+    form_clear_monitor: 'Clear',
+    form_copy_monitor: 'Copy',
     form_inject: 'Inject',
     form_yes: 'Yes',
     form_no: 'No',
     form_error_select_fault: 'Select at least one fault type.',
+    status_up: 'Active',
+    status_down: 'Inactive',
 }
 
 const LABELS_PT_BR = {
@@ -40,10 +44,14 @@ const LABELS_PT_BR = {
     form_experiment_attempts: 'Tentativas do Experimento',
     form_attempts: 'tentativas',
     form_download_log: 'Baixar registro de eventos',
+    form_clear_monitor: 'Limpar',
+    form_copy_monitor: 'Copiar',
     form_inject: 'Injetar',
     form_yes: 'Sim',
     form_no: 'Não',
     form_error_select_fault: 'Selecione pelo menos um tipo de falha.',
+    status_up: 'Ativo',
+    status_down: 'Inativo',
 }
 
 export const LABELS = process.env.NEXT_PUBLIC_APP_LANGUAGE == 'pt-br' ? LABELS_PT_BR : LABELS_EN

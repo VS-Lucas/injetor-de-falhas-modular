@@ -10,16 +10,9 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-const allowedOrigins = ['http://localhost:3000'];
-
 app.use(bp.json());
 app.use(bp.urlencoded({ extended: true }));
-app.use(cors({
-    origin: (origin, callback) => {
-        if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
-        callback(new Error('Origem não permitida pela política CORS.'), false);
-    },
-}));
+app.use(cors());
 
 server.listen(3030, () => console.log('[INFO] Servidor iniciado na porta 3030'));
 

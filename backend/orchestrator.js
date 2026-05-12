@@ -27,31 +27,43 @@ const monitorAndLog = async (ws, attempt, ip, targetState, maxChecks = 36) => {
 const runHwCycle = async (ws, req, networkInterfaceId, attempt, timers) => {
     const { timeToFail, timeToRepair } = timers;
 
-    // Reparo agendado em (agora + TTF + TTR) para garantir que dispara APÓS a falha.
-    const faultTimestamp  = utils.addMinuteToTimestamp(timeToFail);
-    const repairTimestamp = utils.addMinuteToTimestamp(timeToFail + timeToRepair);
+    // Pré-computa os timestamps absolutos ANTES de qualquer await, garantindo que
+    // ambos usam o mesmo instante T como base — o mesmo que hardware.js usa ao
+    // montar os comandos `at` e `nohup+sleep`.
+    const faultAt  = utils.addMinuteToTimestamp(timeToFail, true);
+    const repairAt = utils.addMinuteToTimestamp(timeToFail + timeToRepair, true);
 
-    log(ws, attempt, `[HW] Tempo de falha gerado: ${timeToFail.toFixed(2)} min → ${utils.currentDateTimeFormated(utils.addMinuteToTimestamp(timeToFail, true), true)}`);
+    log(ws, attempt, `[HW] Tempo de falha gerado: ${timeToFail.toFixed(2)} min → ${utils.currentDateTimeFormated(faultAt, true)}`);
     log(ws, attempt, `[HW] Tempo de reparo gerado: ${timeToRepair.toFixed(2)} min`);
 
-    hw.scheduleFault(req, networkInterfaceId, faultTimestamp);
-    hw.scheduleRepair(req, networkInterfaceId, repairTimestamp);
+    // Passa os tempos em minutos; hardware.js combina `at` + `sleep` para precisão de segundo.
+    // Reparo agendado em (TTF + TTR) minutos para garantir disparo após a falha.
+    hw.scheduleFault(req, networkInterfaceId, timeToFail);
+    hw.scheduleRepair(req, networkInterfaceId, timeToFail + timeToRepair);
 
     log(ws, attempt, '[HW] Comandos agendados. Aguardando início da falha...');
 
     // Aguarda até o momento da falha e monitora até o sistema ficar DOWN.
-    await utils.waitForATime(utils.addMinuteToTimestamp(timeToFail, true));
-    log(ws, attempt, '[HW] Falha de Hardware iniciada. Monitorando...');
-    await monitorAndLog(ws, attempt, req.ip, 'down');
+    await utils.waitForATime(faultAt);
+    log(ws, attempt, '[HW] Monitorando estado da interface (aguardando DOWN)...');
+    const faultDetected = await monitorAndLog(ws, attempt, req.ip, 'down');
 
-    log(ws, attempt, '[HW] Sistema DOWN confirmado. Aguardando reparo...');
+    if (faultDetected) {
+        log(ws, attempt, '[HW] Sistema DOWN confirmado. Aguardando reparo...');
+    } else {
+        log(ws, attempt, '[HW] AVISO: Interface não ficou DOWN no tempo esperado. Verifique se o daemon `at` está ativo na VM.');
+    }
 
     // Aguarda até o momento do reparo e monitora até o sistema voltar UP.
-    await utils.waitForATime(utils.addMinuteToTimestamp(timeToFail + timeToRepair, true));
-    log(ws, attempt, '[HW] Reparo de Hardware iniciado. Monitorando...');
-    await monitorAndLog(ws, attempt, req.ip, 'up');
+    await utils.waitForATime(repairAt);
+    log(ws, attempt, '[HW] Monitorando estado da interface (aguardando UP)...');
+    const repairDetected = await monitorAndLog(ws, attempt, req.ip, 'up');
 
-    log(ws, attempt, '[HW] Sistema UP confirmado. Ciclo de Hardware concluído.');
+    if (repairDetected) {
+        log(ws, attempt, '[HW] Sistema UP confirmado. Ciclo de Hardware concluído.');
+    } else {
+        log(ws, attempt, '[HW] AVISO: Sistema não retornou UP no tempo esperado.');
+    }
 };
 
 // ─────────────────────────────────────────────
@@ -70,16 +82,24 @@ const runOsCycle = async (ws, req, attempt, timers) => {
     log(ws, attempt, '[SO] VM pausada (falha de S.O. injetada). Monitorando...');
 
     // Aguarda confirmação de DOWN via ping.
-    await monitorAndLog(ws, attempt, req.ip, 'down');
-    log(ws, attempt, '[SO] Sistema DOWN confirmado. Aguardando reparo...');
+    const faultDetected = await monitorAndLog(ws, attempt, req.ip, 'down');
+    if (faultDetected) {
+        log(ws, attempt, '[SO] Sistema DOWN confirmado. Aguardando reparo...');
+    } else {
+        log(ws, attempt, '[SO] AVISO: Sistema não ficou DOWN após pausar a VM. Verifique o nome da VM e o VBoxManage.');
+    }
 
     // Reparo é agendado APÓS confirmação da falha (satisfaz requisito do professor).
     await utils.waitForSeconds(timeToRepair * 60);
     os.resumeVm(req.vmName);
     log(ws, attempt, '[SO] VM retomada (reparo de S.O. executado). Monitorando...');
 
-    await monitorAndLog(ws, attempt, req.ip, 'up');
-    log(ws, attempt, '[SO] Sistema UP confirmado. Ciclo de S.O. concluído.');
+    const repairDetected = await monitorAndLog(ws, attempt, req.ip, 'up');
+    if (repairDetected) {
+        log(ws, attempt, '[SO] Sistema UP confirmado. Ciclo de S.O. concluído.');
+    } else {
+        log(ws, attempt, '[SO] AVISO: Sistema não retornou UP no tempo esperado.');
+    }
 };
 
 // ─────────────────────────────────────────────

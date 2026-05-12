@@ -4,6 +4,11 @@ const R = require('r-integration');
 
 const isEmpty = (val) => val === '' || val == undefined || val == null;
 
+// Oculta a senha nos logs: mascara `-p 'senha'` e `echo senha | sudo -S`
+const maskSensitive = (cmd) => cmd
+    .replace(/(sshpass\s+-p\s+')([^']+)(')/g, "$1***$3")
+    .replace(/(echo\s+)(\S+)(\s+\|\s+sudo\s+-S)/g, '$1***$3');
+
 exports.currentDateTimeFormated = (nextDate, short) => {
     const checkZero = (data) => data.length == 1 ? '0' + data : data;
 
@@ -21,12 +26,12 @@ exports.currentDateTimeFormated = (nextDate, short) => {
 };
 
 exports.runCommand = (command) => {
-    console.log(`[COMMAND] ${command}`);
+    console.log(`[COMMAND] ${maskSensitive(command)}`);
     return spawn(command, [], { shell: true, detached: true, stdio: 'ignore' });
 };
 
 exports.execCommand = (command) => {
-    console.log(`[COMMAND] ${command}`);
+    console.log(`[COMMAND] ${maskSensitive(command)}`);
     return execSync(command, { encoding: 'utf-8' });
 };
 
@@ -62,8 +67,7 @@ exports.monitorUntil = async (host, state, maxChecks = 36) => {
 };
 
 // ttf e ttr são as médias (sementes) para a distribuição exponencial, em minutos.
-// Retorna { timeToFail, timeToRepair } com valores positivos.
-exports.generateTimers = async (ttf, ttr) => {
+exports.generateTimers = async (ttf, ttr, minMinutes = 0.01) => {
     const rateFailure = 1 / parseFloat(ttf);
     const rateRepair  = 1 / parseFloat(ttr);
 
@@ -72,7 +76,7 @@ exports.generateTimers = async (ttf, ttr) => {
     do {
         timeToFail   = parseFloat(R.executeRCommand(`rexp(1, rate=${rateFailure})`)[0]).toFixed(2);
         timeToRepair = parseFloat(R.executeRCommand(`rexp(1, rate=${rateRepair})`)[0]).toFixed(2);
-    } while (timeToFail <= 0 || timeToRepair <= 0);
+    } while (timeToFail < minMinutes || timeToRepair < minMinutes);
 
     if (isNaN(timeToFail) || isNaN(timeToRepair)) return null;
 
@@ -80,13 +84,15 @@ exports.generateTimers = async (ttf, ttr) => {
 };
 
 exports.autoDetectNetworkInterfaceNames = async (sshUsername, sshPassword, ip) => {
-    const command = `sshpass -p ${sshPassword} ssh ${sshUsername}@${ip} "ifconfig -a | sed 's/[ \\t].*//;/^\\(lo\\|\\)$/d'"`;
+    // Encontra a interface que possui exatamente o IP `ip` — garante que a falha
+    // derruba a interface usada pelo host para pingar e fazer SSH na VM.
+    const command = `sshpass -p '${sshPassword}' ssh -o StrictHostKeyChecking=no ${sshUsername}@${ip} "ip -o addr show | awk '/inet ${ip}\\//{ print \\$2 }'"`;
     try {
         const output = execSync(command, { encoding: 'utf-8' }).toString().trim();
-        return {
-            status: 'success',
-            data: output.replace(/\s/g, '').split(':').filter((el) => el !== '' && el !== 'lo'),
-        };
+        const ifaces = output.split('\n').map(s => s.trim()).filter(Boolean);
+        if (ifaces.length === 0)
+            return { status: 'fail', data: { error: `Nenhuma interface encontrada com o IP ${ip}` } };
+        return { status: 'success', data: ifaces };
     } catch (error) {
         return { status: 'fail', data: { error: error?.stderr } };
     }
